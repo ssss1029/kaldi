@@ -23,12 +23,65 @@ decode=true  # set to false to disable the decoding-related scripts.
 #wsj0=/data/corpora0/LDC93S6B
 #wsj1=/data/corpora0/LDC94S13B
 
-wsj0=/export/corpora5/LDC/LDC93S6B
-wsj1=/export/corpora5/LDC/LDC94S13B
+# You are going to have to change these paths to 
+# wherever the WSJ data lives on your machine.
+wsj0=/mnt/disk1/allan/data/LDC93S6B
+wsj1=/mnt/disk1/allan/data/LDC94S13B
 
+# These can be set to either run.pl or queue.pl
+#  - run.pl is meant for running locally
+#  - queue.pl is meant for running in a more flexilbe (e.g. distributed) environment
+# queue.pl is the default for both of these. 
+# This is the default config to run kaldi on multiple machines
+# I modified ./cmd.sh so that this wasn't the case anymore.
+echo "train_cmd is set to:"
+echo $train_cmd
+echo "decode_cmd is set to:"
+echo $decode_cmd
+
+
+# ################# Notes: 
+# This is the beginning of the stages. Calling run.sh with the --stage flag will 
+# start the script from a specified stage; Calling ./run.sh --stage n will run
+# stage n ... the end, skipping stages 1 ... n-1
+# 
+# There are three main locations for shell scripts to live in:
+#  - /local contains shell scripts that are unique to the current dataset (WSJ in this case)
+#  - /steps contains the "real" ASR steps
+#  - /utils contains stuff that is not strictly necessary for ASR but will help in stages
+#           such as data prep and LM prep
+# 
+# This script does a few things:
+# 
+# 
 
 if [ $stage -le 0 ]; then
-  # data preparation.
+  # The Data Preparation stage
+  # The output of the data preparation stage consists of two sets of things. 
+  # One relates to "the data" (directories like data/train/) and one relates to 
+  # "the language" (directories like data/lang/). The "data" part relates to the 
+  # specific recordings you have, and the "lang" part contains things that relate 
+  # more to the language itself, such as the lexicon, the phone set, and various 
+  # extra information about the phone set that Kaldi needs.
+
+  echo "============== Data Prep =============="	
+  
+  # local/wsj_data_prep.sh
+  # Initializes the /s5/data/local/data/ directory. This folder will contain all the audio
+  # data information that Kaldi needs.
+  # Files created:
+  # => Note the .flist extension is for "File List" files and .scp is for "Script" files
+  #  - Creates /s5/data/local/data/${x}_wav.scp files where x is in {train_si284, train_si84, and etc. for test sets}
+  #    It does this by making these files first:
+  #     - Training sets: s5/data/local/data/train_si84.flist and s5/data/local/data/train_si284.flist
+  #        - Contains locations of all the raw .wv1 sphere files for training
+  #     - Various test and eval sets, named /s5/data/local/data/text_xxx.flist
+  #        - Contains locations of all the raw .wv1 sphere files for testing & evaluation
+  #  - List of transcript files: /s5/data/local/data/dot_files.flist
+  #     - The WSJ data set contains transcripts that are .dot fileis
+  #  - Creates Kaldi-friendly transcripts, called train_si84.txt, etc... inside /s5/data/local/data/
+  #  - Creates spk2utt and utt2spk files in the same location
+  # This deals mainly with preparing the audio data and the relevant metadata files for it.
   local/wsj_data_prep.sh $wsj0/??-{?,??}.? $wsj1/??-{?,??}.?  || exit 1;
 
   # Sometimes, we have seen WSJ distributions that do not have subdirectories
@@ -42,11 +95,28 @@ if [ $stage -le 0 ]; then
   #
   # "nosp" refers to the dictionary before silence probabilities and pronunciation
   # probabilities are added.
+
+  # local/wsj_prepare_dict.sh
+  # This essentially prepares the CMUDict data for Kaldi. It populates /s5/data/local/dict_nosp
+  # 
+  # Creates the following stuff:
+  #  - /data/local/dict_nosp/lexicon.txt. This is a Kaldi-friendly formatting of the
+  #    CMUDict lexicon.
+  #  - It also makes a few other files, like non-silence_phones.txt, silence_phones.txt, etc.
+  #    They can all be found under /s5/data/local/dict_nopsp
+  echo "=================== WSJ prepare dict ================="
   local/wsj_prepare_dict.sh --dict-suffix "_nosp" || exit 1;
 
+
+  # utils/prepare_lang.sh
+  # Note this script is in the /utils/ directory: it is NOT WSJ-specific
+  # This script prepares a directory such as /data/lang_nosp given the dict we created
+  # in the previous step, a spoken noise label, and a temporary directory to work off of
+  echo "=================== Prepare Lang ====================="
   utils/prepare_lang.sh data/local/dict_nosp \
                         "<SPOKEN_NOISE>" data/local/lang_tmp_nosp data/lang_nosp || exit 1;
 
+  echo "=================== Format Data ======================"
   local/wsj_format_data.sh --lang-suffix "_nosp" || exit 1;
 
   # We suggest to run the next three commands in the background,
@@ -59,32 +129,39 @@ if [ $stage -le 0 ]; then
   # is setup to use qsub.  Else, just remove the --cmd option.
   # NOTE: If you have a setup corresponding to the older cstr_wsj_data_prep.sh style,
   # use local/cstr_wsj_extend_dict.sh --dict-suffix "_nosp" $corpus/wsj1/doc/ instead.
-  (
+
+  # I'm running this in the foreground for debugging purposes. Note the commented out "# &&" on the
+  # last line...
+  echo "================== Stuff that should normally be run in the background ======================"
     local/wsj_extend_dict.sh --dict-suffix "_nosp" $wsj1/13-32.1  && \
       utils/prepare_lang.sh data/local/dict_nosp_larger \
                             "<SPOKEN_NOISE>" data/local/lang_tmp_nosp_larger data/lang_nosp_bd && \
       local/wsj_train_lms.sh --dict-suffix "_nosp" &&
       local/wsj_format_local_lms.sh --lang-suffix "_nosp" # &&
-  ) &
 
   # Now make MFCC features.
   # mfccdir should be some place with a largish disk where you
   # want to store MFCC features.
-
+  echo "=================== Beginning to make MFCCs and compute_smvn_stats =========================="
   for x in test_eval92 test_eval93 test_dev93 train_si284; do
-    steps/make_mfcc.sh --cmd "$train_cmd" --nj 20 data/$x || exit 1;
+    # Changed from 20 -> 36
+    steps/make_mfcc.sh --cmd "$train_cmd" --nj 36 data/$x || exit 1;
     steps/compute_cmvn_stats.sh data/$x || exit 1;
   done
 
+  echo "=================== Creating subset data dir 1 =================="
   utils/subset_data_dir.sh --first data/train_si284 7138 data/train_si84 || exit 1
 
+  echo "=================== Creating subset data dir 2 =================="
   # Now make subset with the shortest 2k utterances from si-84.
   utils/subset_data_dir.sh --shortest data/train_si84 2000 data/train_si84_2kshort || exit 1;
 
+  echo "=================== Creating subset data dir 3 =================="
   # Now make subset with half of the data from si-84.
   utils/subset_data_dir.sh data/train_si84 3500 data/train_si84_half || exit 1;
 fi
 
+echo "Done with stage 0"
 
 if [ $stage -le 1 ]; then
   # monophone
@@ -99,6 +176,16 @@ if [ $stage -le 1 ]; then
   fi
 
   if $decode; then
+    # There's some sort of reason why --nj are 10 and 8 here but idk why yet
+    # --nj 36 fails stuff
+
+    # utils/mkgraph.sh makes HCLG.fst. It needs to be called only once.
+    # exp/mono0a/graph_nosp_tgpr/HCLG.fst shoud exist at the end of this script.
+
+    # steps/decode.sh takes in the graph we created from the mkgraph.sh script and 
+    # decodes audio based on that? Does it compute mfccs too? 
+    # JK I think mfccs are made earlier.
+
     utils/mkgraph.sh data/lang_nosp_test_tgpr exp/mono0a exp/mono0a/graph_nosp_tgpr && \
       steps/decode.sh --nj 10 --cmd "$decode_cmd" exp/mono0a/graph_nosp_tgpr \
         data/test_dev93 exp/mono0a/decode_nosp_tgpr_dev93 && \
@@ -107,12 +194,17 @@ if [ $stage -le 1 ]; then
   fi
 fi
 
+exit 0; # For now
+
 if [ $stage -le 2 ]; then
   # tri1
   if $train; then
     steps/align_si.sh --boost-silence 1.25 --nj 10 --cmd "$train_cmd" \
       data/train_si84_half data/lang_nosp exp/mono0a exp/mono0a_ali || exit 1;
 
+    
+    # Train what deltas?
+    # I thought mfcc's were computed up there somewhere^
     steps/train_deltas.sh --boost-silence 1.25 --cmd "$train_cmd" 2000 10000 \
       data/train_si84_half data/lang_nosp exp/mono0a_ali exp/tri1 || exit 1;
   fi
@@ -320,6 +412,7 @@ if [ $stage -le 6 ]; then
   fi
 fi
 
+echo "FINISHED run.sh!"
 
 exit 0;
 

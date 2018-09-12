@@ -44,6 +44,8 @@ data=$1
 lang=$2
 dir=$3
 
+# Out of vocabulary symbol: An integer to
+# Represent stuff (words?) that is out of vocabulary
 oov_sym=`cat $lang/oov.int` || exit 1;
 
 mkdir -p $dir/log
@@ -115,19 +117,29 @@ while [ $x -lt $num_iters ]; do
     if echo $realign_iters | grep -w $x >/dev/null; then
       echo "$0: Aligning data"
       mdl="gmm-boost-silence --boost=$boost_silence `cat $lang/phones/optional_silence.csl` $dir/$x.mdl - |"
+      
+      # Align features given [GMM-based] models.\n"
+      # Usage: gmm-align-compiled [options] <model-in> <graphs-rspecifier> <feature-rspecifier> <alignments-wspecifier> [scores-wspecifier]\n"
       $cmd JOB=1:$nj $dir/log/align.$x.JOB.log \
-        gmm-align-compiled $scale_opts --beam=$beam --retry-beam=$[$beam*4] --careful=$careful "$mdl" \
+	gmm-align-compiled $scale_opts --beam=$beam --retry-beam=$[$beam*4] --careful=$careful "$mdl" \
         "ark:gunzip -c $dir/fsts.JOB.gz|" "$feats" "ark,t:|gzip -c >$dir/ali.JOB.gz" \
         || exit 1;
     fi
+    
+    # Accumulate stats for GMM training
+    # Usage: gmm-acc-stats-ali [options] <model-in> <feature-rspecifier> <alignments-rspecifier> <stats-out>
     $cmd JOB=1:$nj $dir/log/acc.$x.JOB.log \
       gmm-acc-stats-ali  $dir/$x.mdl "$feats" "ark:gunzip -c $dir/ali.JOB.gz|" \
       $dir/$x.JOB.acc || exit 1;
 
+    # Do Maximum Likelihood re-estimation on GMM-based acoustic models
+    # Usage: gmm-est [options] <model-in> <stats-in> <model-out>
     $cmd $dir/log/update.$x.log \
       gmm-est --write-occs=$dir/$[$x+1].occs --mix-up=$numgauss --power=$power $dir/$x.mdl \
       "gmm-sum-accs - $dir/$x.*.acc|" $dir/$[$x+1].mdl || exit 1;
+
     rm $dir/$x.mdl $dir/$x.*.acc $dir/$x.occs 2>/dev/null
+
   fi
   if [ $x -le $max_iter_inc ]; then
      numgauss=$[$numgauss+$incgauss];

@@ -121,6 +121,15 @@ if [ $stage -le 0 ]; then
     [ "`cat $graphdir/num_pdfs`" -eq `am-info --print-args=false $model | grep pdfs | awk '{print $NF}'` ] || \
       { echo "$0: Error: Mismatch in number of pdfs with $model"; exit 1; }
   fi
+
+  # gmm-latgen-simple takes in the following:
+  # - model_in_filename (I'm guessing this is the acoustic phone model)
+  # - fst_in_filename (HCLG.fst)
+  # - feature_rspecifier ($feats in this case)
+  # - lattice_wspecifier ("ark:|gzip -c > $dir/lat.JOB.gz" in this case)
+  # - words_rspecifier (optional)
+  # - alignment_wspecifier (optional)
+
   $cmd --num-threads $num_threads JOB=1:$nj $dir/log/decode.JOB.log \
     gmm-latgen-faster$thread_string --max-active=$max_active --beam=$beam --lattice-beam=$lattice_beam \
     --acoustic-scale=$acwt --allow-partial=true --word-symbol-table=$graphdir/words.txt $decode_extra_opts \

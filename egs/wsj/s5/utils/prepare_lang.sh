@@ -83,10 +83,12 @@ if [ $# -ne 4 ]; then
   echo "     --num-sil-states <number of states>             # default: 5, #states in silence models."
   echo "     --num-nonsil-states <number of states>          # default: 3, #states in non-silence models."
   echo "     --position-dependent-phones (true|false)        # default: true; if true, use _B, _E, _S & _I"
-  echo "                                                     # markers on phones to indicate word-internal positions. "
+  echo "                                                     # _B: Beginning, _E: End, _I: Intermediate, _S: Singular"
+  echo "                                                     # markers on phones to indicate word-internal positions."
   echo "     --share-silence-phones (true|false)             # default: false; if true, share pdfs of "
   echo "                                                     # all silence phones. "
   echo "     --sil-prob <probability of silence>             # default: 0.5 [must have 0 <= silprob < 1]"
+  echo "                                                     # ^ I THINK this is false! See literally 8-10 lines underneath this if/if blub in the source code."
   echo "     --phone-symbol-table <filename>                 # default: \"\"; if not empty, use the provided "
   echo "                                                     # phones.txt as phone symbol table. This is useful "
   echo "                                                     # if you use a new dictionary for the existing setup."
@@ -100,13 +102,16 @@ if [ $# -ne 4 ]; then
   exit 1;
 fi
 
-srcdir=$1
-oov_word=$2
-tmpdir=$3
-dir=$4
+srcdir=$1    # Directory of the dictionary (contains lexicon.txt) In this case, data/local/dict_nosp (which 
+             # was created by /local/wsj_prepare_dict.sh
+oov_word=$2  # Out of vocab words
+tmpdir=$3    # Temporary dir. In this case, data/local/lang_tmp_nosp
+dir=$4       # Result dir. In this case data/lang_nosp
+
 mkdir -p $dir $tmpdir $dir/phones
 
-silprob=false
+# Note this. It will come into play later.
+silprob=false # ugh.
 [ -f $srcdir/lexiconp_silprob.txt ] && silprob=true
 
 [ -f path.sh ] && . ./path.sh
@@ -114,6 +119,7 @@ silprob=false
 ! utils/validate_dict_dir.pl $srcdir && \
   echo "*Error validating directory $srcdir*" && exit 1;
 
+# lexiconp.txt contains silence probabilities and lexicon.txt doesn't
 if [[ ! -f $srcdir/lexicon.txt ]]; then
   echo "**Creating $srcdir/lexicon.txt from $srcdir/lexiconp.txt"
   perl -ape 's/(\S+\s+)\S+\s+(.+)/$1$2/;' < $srcdir/lexiconp.txt > $srcdir/lexicon.txt || exit 1;
@@ -127,6 +133,10 @@ if [ ! -z "$unk_fst" ] && [ ! -f "$unk_fst" ]; then
   echo "$0: expected --unk-fst $unk_fst to exist as a file"
   exit 1
 fi
+
+#################################
+### Begin Validation stuffs
+#################################
 
 if ! utils/validate_dict_dir.pl $srcdir >&/dev/null; then
   utils/validate_dict_dir.pl $srcdir  # show the output.
@@ -160,6 +170,10 @@ if [ ! -z "$extra_word_disambig_syms" ]; then
   fi
 fi
 
+####################################
+#### END validation stuffs
+####################################
+
 if $position_dependent_phones; then
   # Create $tmpdir/lexiconp.txt from $srcdir/lexiconp.txt (or
   # $tmpdir/lexiconp_silprob.txt from $srcdir/lexiconp_silprob.txt) by
@@ -167,6 +181,7 @@ if $position_dependent_phones; then
   # In this recipe, these markers apply to silence also.
   # Do this starting from lexiconp.txt only.
   if "$silprob"; then
+    # IT WON'T GO HERE
     perl -ane '@A=split(" ",$_); $w = shift @A; $p = shift @A; $silword_p = shift @A;
               $wordsil_f = shift @A; $wordnonsil_f = shift @A; @A>0||die;
          if(@A==1) { print "$w $p $silword_p $wordsil_f $wordnonsil_f $A[0]_S\n"; }
@@ -174,6 +189,7 @@ if $position_dependent_phones; then
          for($n=1;$n<@A-1;$n++) { print "$A[$n]_I "; } print "$A[$n]_E\n"; } ' \
                 < $srcdir/lexiconp_silprob.txt > $tmpdir/lexiconp_silprob.txt
   else
+    # IT WILL GO HERE
     perl -ane '@A=split(" ",$_); $w = shift @A; $p = shift @A; @A>0||die;
          if(@A==1) { print "$w $p $A[0]_S\n"; } else { print "$w $p $A[0]_B ";
          for($n=1;$n<@A-1;$n++) { print "$A[$n]_I "; } print "$A[$n]_E\n"; } ' \
@@ -186,11 +202,12 @@ if $position_dependent_phones; then
   # where the versions depend on the position of the phone within a word.
   # For instance, we'd have:
   # AA AA_B AA_E AA_I AA_S
-  # for (B)egin, (E)nd, (I)nternal and (S)ingleton
+  # for (B)egin, (E)nd, (I)nternal and (S)ingleton (lmao they defined it down here too)
   # and in the case of silence
   # SIL SIL SIL_B SIL_E SIL_I SIL_S
   # [because SIL on its own is one of the variants; this is for when it doesn't
   #  occur inside a word but as an option in the lexicon.]
+  # How can you have a silence phone inside a word? JK It turns out the lexicon doesn't use this?
 
   # This phone map expands the phone lists into all the word-position-dependent
   # versions of the phone lists.
@@ -198,9 +215,13 @@ if $position_dependent_phones; then
     <(set -f; for x in `cat $srcdir/nonsilence_phones.txt`; do for y in "" "_B" "_E" "_I" "_S"; do echo -n "$x$y "; done; echo; done) \
     > $tmpdir/phone_map.txt
 else
+  # Does not go here in this recipie
+
   if "$silprob"; then
+    # There's nothing to be done to the lexicon
     cp $srcdir/lexiconp_silprob.txt $tmpdir/lexiconp_silprob.txt
   else
+    # There's nothing to be done to the lexicon
     cp $srcdir/lexiconp.txt $tmpdir/lexiconp.txt
   fi
 
@@ -214,6 +235,7 @@ mkdir -p $dir/phones  # various sets of phones...
 # Sets of phones for use in clustering, and making monophone systems.
 
 if $share_silence_phones; then
+  # It will not go into here in this recipie
   # build a roots file that will force all the silence phones to share the
   # same pdf's. [three distinct states, only the transitions will differ.]
   # 'shared'/'not-shared' means, do we share the 3 states of the HMM

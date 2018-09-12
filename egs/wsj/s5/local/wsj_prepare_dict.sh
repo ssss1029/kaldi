@@ -47,7 +47,6 @@ svn co  https://svn.code.sf.net/p/cmusphinx/code/trunk/cmudict \
 
 #(2) Dictionary preparation:
 
-
 # Make phones symbol-table (adding in silence and verbal and non-verbal noises at this point).
 # We are adding suffixes _B, _E, _S for beginning, ending, and singleton phones.
 
@@ -57,6 +56,11 @@ echo SIL > $dir/optional_silence.txt
 
 # nonsilence phones; on each line is a list of phones that correspond
 # really to the same base phone.
+# Lines look like:
+#   K
+#   IY IY0 IY1 IY2
+#   R
+# Recall that the numbers after phones (e.g. IY1) correspond to stress levels
 cat $dir/cmudict/cmudict.0.7a.symbols | perl -ane 's:\r::; print;' | \
  perl -e 'while(<>){
   chop; m:^([^\d]+)(\d*)$: || die "Bad phone $_"; 
@@ -78,6 +82,7 @@ grep -v ';;;' $dir/cmudict/cmudict.0.7a | \
 # Add to cmudict the silences, noises etc.
 
 # the sort | uniq is to remove a duplicated pron from cmudict.
+# This just adds a couple of silence pronunciations to the dictionary.
 (echo '!SIL SIL'; echo '<SPOKEN_NOISE> SPN'; echo '<UNK> SPN'; echo '<NOISE> NSN'; ) | \
  cat - $dir/lexicon1_raw_nosil.txt | sort | uniq > $dir/lexicon2_raw.txt || exit 1;
 
@@ -85,6 +90,8 @@ grep -v ';;;' $dir/cmudict/cmudict.0.7a | \
 # lexicon.txt is without the _B, _E, _S, _I markers.
 # This is the input to wsj_format_data.sh
 cp $dir/lexicon2_raw.txt $dir/lexicon.txt
+
+# $dir/lexicon.txt is now a mapping of words to pronunciations in sorted order yay
 
 rm $dir/lexiconp.txt 2>/dev/null
 

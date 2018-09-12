@@ -45,6 +45,10 @@ fi
 # make $mfccdir an absolute pathname.
 mfccdir=`perl -e '($dir,$pwd)= @ARGV; if($dir!~m:^/:) { $dir = "$pwd/$dir"; } print $dir; ' $mfccdir ${PWD}`
 
+echo "mffccdir is going to be $mfccdir"
+echo "logdir is $logdir"
+echo "data dir is going to be $data"
+
 # use "name" as part of name of the archive.
 name=`basename $data`
 
@@ -68,6 +72,12 @@ for f in $required; do
   fi
 done
 utils/validate_data_dir.sh --no-text --no-feats $data || exit 1;
+
+
+# VLTN Warp Factors: Warp the frequency spectrum in order to normalize
+# different vocal tract lengths in humans. Differing vocal tract lengths 
+# can be problematic because they tend to have different haronic frequencies.
+# (Vocal Tract Length Normalization)
 
 if [ -f $data/spk2warp ]; then
   echo "$0 [info]: using VTLN warp factors from $data/spk2warp"
@@ -115,6 +125,8 @@ else
   for n in $(seq $nj); do
     split_scps="$split_scps $logdir/wav_${name}.$n.scp"
   done
+
+  echo "split_scps = $split_scps"
 
   utils/split_scp.pl $scp $split_scps || exit 1;
 

@@ -12,11 +12,13 @@ fi
 
 dir=`pwd`/data/local/data
 lmdir=`pwd`/data/local/nist_lm
-mkdir -p $dir $lmdir
 local=`pwd`/local
 utils=`pwd`/utils
 
+mkdir -p $dir $lmdir
+
 . ./path.sh # Needed for KALDI_ROOT
+# Converts from the NIST SPHERE format to other more usable formats
 sph2pipe=$KALDI_ROOT/tools/sph2pipe_v2.5/sph2pipe
 if [ ! -x $sph2pipe ]; then
   echo "Could not find (or execute) the sph2pipe program at $sph2pipe";
@@ -27,9 +29,10 @@ if [ -z $IRSTLM ] ; then
   export IRSTLM=$KALDI_ROOT/tools/irstlm/
 fi
 export PATH=${PATH}:$IRSTLM/bin
+# Just checks if IRSTLM exists. Doesn't do actual pruning.
 if ! command -v prune-lm >/dev/null 2>&1 ; then
   echo "$0: Error: the IRSTLM is not available or compiled" >&2
-  echo "$0: Error: We used to install it by default, but." >&2
+  echo "$0: Error: We USED to install it by default, but." >&2
   echo "$0: Error: this is no longer the case." >&2
   echo "$0: Error: To install it, go to $KALDI_ROOT/tools" >&2
   echo "$0: Error: and run extras/install_irstlm.sh" >&2
@@ -102,6 +105,9 @@ cat links/13-32.1/wsj1/doc/indices/wsj1/eval/h1_p0.ndx | \
 # Nov'93: (213 utts, 5k)
 cat links/13-32.1/wsj1/doc/indices/wsj1/eval/h2_p0.ndx | \
   sed s/13_32_1/13_33_1/ | \
+# Nov'93: (213 utts, 5k)
+cat links/13-32.1/wsj1/doc/indices/wsj1/eval/h2_p0.ndx | \
+  sed s/13_32_1/13_33_1/ | \
   $local/ndx2flist.pl $* | sort > test_eval93_5k.flist
 
 # Dev-set for Nov'93 (503 utts)
@@ -125,11 +131,19 @@ find `readlink links/13-16.1`/???1/??_??_05 -print | grep -i ".wv1" | sort > dev
 # Finding the transcript files:
 for x in $*; do find -L $x -iname '*.dot'; done > dot_files.flist
 
+# Generates ${x}.trans1 and ${x}_sph.scp files from the WSJ data format
+# ${x}.trans1 looks like:
+#     011c0201 The sale of the hotels is part of Holiday\'s strategy
+#     <Utterance ID> <Transcript> 
+# ${x}_sph.scp is a script file of SPHERE files (we will change this to wavs later), it looks like:
+#     011c0202 /mnt/disk1/allan/data/LDC93S6B/11-1.1/wsj0/si_tr_s/011/011c0202.wv1
+#     <Utterance ID> <File Location>
 # Convert the transcripts into our format (no normalization yet)
 for x in train_si84 train_si284 test_eval92 test_eval93 test_dev93 test_eval92_5k test_eval93_5k test_dev93_5k dev_dt_05 dev_dt_20; do
    $local/flist2scp.pl $x.flist | sort > ${x}_sph.scp
    cat ${x}_sph.scp | awk '{print $1}' | $local/find_transcripts.pl  dot_files.flist > $x.trans1
 done
+
 
 # Do some basic normalization steps.  At this point we don't remove OOVs--
 # that will be done inside the training scripts, as we'd like to make the
@@ -139,6 +153,9 @@ for x in train_si84 train_si284 test_eval92 test_eval93 test_dev93 test_eval92_5
    cat $x.trans1 | $local/normalize_transcript.pl $noiseword | sort > $x.txt || exit 1;
 done
 
+# Creates ${x}_wav.scp files (WAV Script files)
+# Looks like:
+#     <Path to sph2pipe> -f wav <Path to sphere/wv1 file>
 # Create scp's with wav's. (the wv1 in the distribution is not really wav, it is sph.)
 for x in train_si84 train_si284 test_eval92 test_eval93 test_dev93 test_eval92_5k test_eval93_5k test_dev93_5k dev_dt_05 dev_dt_20; do
   awk '{printf("%s '$sph2pipe' -f wav %s |\n", $1, $2);}' < ${x}_sph.scp > ${x}_wav.scp
@@ -150,8 +167,20 @@ for x in train_si84 train_si284 test_eval92 test_eval93 test_dev93 test_eval92_5
    cat $x.utt2spk | $utils/utt2spk_to_spk2utt.pl > $x.spk2utt || exit 1;
 done
 
+################## LM preparation and pruning
+# IRSTLM is a toolkit for modeling large n-gram models
+# Prep and prune LMS
+# - Bigram 
+# - Trigram
+# - Trigram Pruned
+# - 5k Bigram
+# - 5k Trigram
+# - 5k Trigram Pruned
+# "5k" Means the LM is limited to the top 5,000 words.
 
-#in case we want to limit lm's on most frequent words, copy lm training word frequency list
+
+# in case we want to limit lm's on most frequent words, copy lm training word frequency list
+# wfl_64.lst is the top-64K word frequency list
 cp links/13-32.1/wsj1/doc/lng_modl/vocab/wfl_64.lst $lmdir
 chmod u+w $lmdir/*.lst # had weird permissions on source.
 
@@ -159,56 +188,30 @@ chmod u+w $lmdir/*.lst # had weird permissions on source.
 # verbalized pronunciations.   This is the most common test setup, I understand.
 
 cp links/13-32.1/wsj1/doc/lng_modl/base_lm/bcb20onp.z $lmdir/lm_bg.arpa.gz || exit 1;
-chmod u+w $lmdir/lm_bg.arpa.gz
+chmod u+w $lmdir/lm_bg.arpa.gz # Bigram
 
 # trigram would be:
 cat links/13-32.1/wsj1/doc/lng_modl/base_lm/tcb20onp.z | \
  perl -e 'while(<>){ if(m/^\\data\\/){ print; last;  } } while(<>){ print; }' | \
- gzip -c -f > $lmdir/lm_tg.arpa.gz || exit 1;
+ gzip -c -f > $lmdir/lm_tg.arpa.gz || exit 1; # Trigram
 
 prune-lm --threshold=1e-7 $lmdir/lm_tg.arpa.gz $lmdir/lm_tgpr.arpa || exit 1;
-gzip -f $lmdir/lm_tgpr.arpa || exit 1;
+gzip -f $lmdir/lm_tgpr.arpa || exit 1; # Trigram pruned
 
 # repeat for 5k language models
 cp links/13-32.1/wsj1/doc/lng_modl/base_lm/bcb05onp.z  $lmdir/lm_bg_5k.arpa.gz || exit 1;
-chmod u+w $lmdir/lm_bg_5k.arpa.gz
+chmod u+w $lmdir/lm_bg_5k.arpa.gz # 5k Bigram
 
 # trigram would be: !only closed vocabulary here!
 cp links/13-32.1/wsj1/doc/lng_modl/base_lm/tcb05cnp.z $lmdir/lm_tg_5k.arpa.gz || exit 1;
 chmod u+w $lmdir/lm_tg_5k.arpa.gz
 gunzip $lmdir/lm_tg_5k.arpa.gz
-tail -n 4328839 $lmdir/lm_tg_5k.arpa | gzip -c -f > $lmdir/lm_tg_5k.arpa.gz
+tail -n 4328839 $lmdir/lm_tg_5k.arpa | gzip -c -f > $lmdir/lm_tg_5k.arpa.gz # Trigram 5k
 rm $lmdir/lm_tg_5k.arpa
 
 prune-lm --threshold=1e-7 $lmdir/lm_tg_5k.arpa.gz $lmdir/lm_tgpr_5k.arpa || exit 1;
-gzip -f $lmdir/lm_tgpr_5k.arpa || exit 1;
+gzip -f $lmdir/lm_tgpr_5k.arpa || exit 1; # Trigram pruned 5k
 
+################### End LM Prep and pruning
 
 if [ ! -f wsj0-train-spkrinfo.txt ] || [ `cat wsj0-train-spkrinfo.txt | wc -l` -ne 134 ]; then
-  rm wsj0-train-spkrinfo.txt
-  ! wget https://catalog.ldc.upenn.edu/docs/LDC93S6A/wsj0-train-spkrinfo.txt && \
-    echo "Getting wsj0-train-spkrinfo.txt from backup location" && \
-    wget --no-check-certificate https://sourceforge.net/projects/kaldi/files/wsj0-train-spkrinfo.txt
-fi
-
-if [ ! -f wsj0-train-spkrinfo.txt ]; then
-  echo "Could not get the spkrinfo.txt file from LDC website (moved)?"
-  echo "This is possibly omitted from the training disks; couldn't find it."
-  echo "Everything else may have worked; we just may be missing gender info"
-  echo "which is only needed for VTLN-related diagnostics anyway."
-  exit 1
-fi
-# Note: wsj0-train-spkrinfo.txt doesn't seem to be on the disks but the
-# LDC put it on the web.  Perhaps it was accidentally omitted from the
-# disks.
-
-cat links/11-13.1/wsj0/doc/spkrinfo.txt \
-    links/13-32.1/wsj1/doc/evl_spok/spkrinfo.txt \
-    links/13-34.1/wsj1/doc/dev_spok/spkrinfo.txt \
-    links/13-34.1/wsj1/doc/train/spkrinfo.txt \
-   ./wsj0-train-spkrinfo.txt  | \
-    perl -ane 'tr/A-Z/a-z/; m/^;/ || print;' | \
-   awk '{print $1, $2}' | grep -v -- -- | sort | uniq > spk2gender
-
-
-echo "Data preparation succeeded"

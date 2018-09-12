@@ -48,6 +48,11 @@ tree=$2/tree
 model=$2/final.mdl
 dir=$3
 
+echo "==> lang = $lang"
+echo "==> tree = $tree"
+echo "==> model = $model"
+echo "==> dir = $dir"
+
 mkdir -p $dir
 
 # If $lang/tmp/LG.fst does not exist or is older than its sources, make it...
@@ -55,22 +60,32 @@ mkdir -p $dir
 # would have to use -o instead),  -f means file exists, and -ot means older than).
 
 required="$lang/L.fst $lang/G.fst $lang/phones.txt $lang/words.txt $lang/phones/silence.csl $lang/phones/disambig.int $model $tree"
+
+echo "==> required = $required"
+
 for f in $required; do
   [ ! -f $f ] && echo "mkgraph.sh: expected $f to exist" && exit 1;
 done
 
 if [ -f $dir/HCLG.fst ]; then
   # detect when the result already exists, and avoid overwriting it.
+  # ==> So this only has to be done once?
   must_rebuild=false
   for f in $required; do
     [ $f -nt $dir/HCLG.fst ] && must_rebuild=true
   done
   if ! $must_rebuild; then
     echo "$0: $dir/HCLG.fst is up to date."
-    exit 0
+    # exit 0
+    echo "==> Continuing script because debugging"
   fi
 fi
 
+
+echo "==> tree-info $tree results:"
+echo "=============="
+tree-info $tree
+echo "=============="
 
 N=$(tree-info $tree | grep "context-width" | cut -d' ' -f2) || { echo "Error when getting context-width"; exit 1; }
 P=$(tree-info $tree | grep "central-position" | cut -d' ' -f2) || { echo "Error when getting central-position"; exit 1; }
