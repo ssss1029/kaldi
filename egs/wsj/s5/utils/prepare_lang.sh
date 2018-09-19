@@ -236,6 +236,7 @@ mkdir -p $dir/phones  # various sets of phones...
 
 if $share_silence_phones; then
   # It will not go into here in this recipie
+
   # build a roots file that will force all the silence phones to share the
   # same pdf's. [three distinct states, only the transitions will differ.]
   # 'shared'/'not-shared' means, do we share the 3 states of the HMM
@@ -259,7 +260,7 @@ else
 fi
 
 cat $srcdir/silence_phones.txt | utils/apply_map.pl $tmpdir/phone_map.txt | \
-  awk '{for(n=1;n<=NF;n++) print $n;}' > $dir/phones/silence.txt
+  awk '{for(n=1;n<=NF;n++) print $n;}' > $dir/phones/silence.txt #  Will include the _B, _E, etc. suffixes
 cat $srcdir/nonsilence_phones.txt | utils/apply_map.pl $tmpdir/phone_map.txt | \
   awk '{for(n=1;n<=NF;n++) print $n;}' > $dir/phones/nonsilence.txt
 cp $srcdir/optional_silence.txt $dir/phones/optional_silence.txt

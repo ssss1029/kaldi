@@ -81,36 +81,50 @@ int main(int argc, char *argv[]) {
 
 
     std::string topo_filename = po.GetArg(1);
-    int dim = atoi(po.GetArg(2).c_str());
+    int dim = atoi(po.GetArg(2).c_str());      // Convert to integer. Usually 39.
     KALDI_ASSERT(dim> 0 && dim < 10000);
-    std::string model_filename = po.GetArg(3);
-    std::string tree_filename = po.GetArg(4);
+    std::string model_filename = po.GetArg(3); // Output file
+    std::string tree_filename = po.GetArg(4);  // Ouput file
 
     Vector<BaseFloat> glob_inv_var(dim);
     glob_inv_var.Set(1.0);
     Vector<BaseFloat> glob_mean(dim);
     glob_mean.Set(1.0);
 
+    printf("----------- \n");
+    /*
+     * train_feats is an rspecifier for training features [used to set mean and variance]
+     * In WSJ, this prints something like:
+     * ark,s,cs:apply-cmvn  --utt2spk=ark:data/train_si84_2kshort/split10/1/utt2spk scp:data/train_si84_2kshort/split10/1/cmvn.scp scp:data/train_si84_2kshort/split10/1/feats.scp ark:- | add-deltas  ark:- ark:- | subset-feats --n=10 ark:- ark:-|
+     **/
+    printf(train_feats.c_str());
+    printf("\n ---------------- \n");
+
     if (train_feats != "") {
       double count = 0.0;
       Vector<double> var_stats(dim);
       Vector<double> mean_stats(dim);
       SequentialDoubleMatrixReader feat_reader(train_feats);
+      int32 num_feat_reads = 0;
       for (; !feat_reader.Done(); feat_reader.Next()) {
+        num_feat_reads += 1;
         const Matrix<double> &mat = feat_reader.Value();
+        std::cout << "Reading from matrix with " << std::to_string(mat.NumCols()) << " columns and " << std::to_string(mat.NumRows()) << " rows.\n";
         for (int32 i = 0; i < mat.NumRows(); i++) {
           count += 1.0;
-          var_stats.AddVec2(1.0, mat.Row(i));
-          mean_stats.AddVec(1.0, mat.Row(i));
+          var_stats.AddVec2(1.0, mat.Row(i)); // Sum of squares for sample variance
+          mean_stats.AddVec(1.0, mat.Row(i)); // Sum for sample mean
         }
       }
+      std::cout << "Total num feat reads from the SequentialDoubleMatrixReader = " << std::to_string(num_feat_reads) << "\n";
+
       if (count == 0) { KALDI_ERR << "no features were seen."; }
       var_stats.Scale(1.0/count);
       mean_stats.Scale(1.0/count);
       var_stats.AddVec2(-1.0, mean_stats);
       if (var_stats.Min() <= 0.0)
         KALDI_ERR << "bad variance";
-      var_stats.InvertElements();
+      var_stats.InvertElements();  // Why is this inverting elements?
       glob_inv_var.CopyFromVec(var_stats);
       glob_mean.CopyFromVec(mean_stats);
     }
@@ -118,9 +132,15 @@ int main(int argc, char *argv[]) {
     HmmTopology topo;
     bool binary_in;
     Input ki(topo_filename, &binary_in);
-    topo.Read(ki.Stream(), binary_in);
+    topo.Read(ki.Stream(), binary_in); // It's reading from the XML-like file with the HMM topology (data/lang_nosp/topo)
 
     const std::vector<int32> &phones = topo.GetPhones();
+    std::cout << "------------------------ \n";
+    std::cout << "Phones from the HMM Topology:\n";
+    for (auto i = phones.begin(); i != phones.end(); ++i) {
+      std::cout << *i << ' ';
+    }
+    std::cout << "\n ------------------------ \n";
 
     std::vector<int32> phone2num_pdf_classes (1+phones.back());
     for (size_t i = 0; i < phones.size(); i++)

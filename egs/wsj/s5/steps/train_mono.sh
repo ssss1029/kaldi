@@ -50,6 +50,12 @@ oov_sym=`cat $lang/oov.int` || exit 1;
 
 mkdir -p $dir/log
 echo $nj > $dir/num_jobs
+
+#############################################
+# Doing some more data prep stuff
+#############################################
+
+# Create the split data directories inside the original directory
 sdata=$data/split$nj;
 [[ -d $sdata && $data/feats.scp -ot $sdata ]] || split_data.sh $data $nj || exit 1;
 
@@ -57,13 +63,22 @@ cp $lang/phones.txt $dir || exit 1;
 
 $norm_vars && cmvn_opts="--norm-vars=true $cmvn_opts"
 echo $cmvn_opts  > $dir/cmvn_opts # keep track of options to CMVN.
+
+# This does not happen in this reipie
 [ ! -z $delta_opts ] && echo $delta_opts > $dir/delta_opts # keep track of options to delta
 
+# $feats will contain a command that will apply cmvn to all the feats
+# Sample mean and variance calculated per speaker since utt2speak is provided.
+# Note nothing is actually run here
 feats="ark,s,cs:apply-cmvn $cmvn_opts --utt2spk=ark:$sdata/JOB/utt2spk scp:$sdata/JOB/cmvn.scp scp:$sdata/JOB/feats.scp ark:- | add-deltas $delta_opts ark:- ark:- |"
 example_feats="`echo $feats | sed s/JOB/1/g`";
 
+##############################################
 echo "$0: Initializing monophone system."
+##############################################
 
+# TODO: Figure out how this sets.int file is calculated
+# It looks like this is what specifies the groups that the decision trees are based on.
 [ ! -f $lang/phones/sets.int ] && exit 1;
 shared_phones_opt="--shared-phones=$lang/phones/sets.int"
 
@@ -74,9 +89,15 @@ if [ $stage -le -3 ]; then
     echo "error getting feature dimension"
     exit 1;
   fi
+
+  echo "---"  
+  echo "feat_dim = $feat_dim"  
+  echo "---"
+
   $cmd JOB=1 $dir/log/init.log \
     gmm-init-mono $shared_phones_opt "--train-feats=$feats subset-feats --n=10 ark:- ark:-|" $lang/topo $feat_dim \
     $dir/0.mdl $dir/tree || exit 1;
+  exit 0;
 fi
 
 numgauss=`gmm-info --print-args=false $dir/0.mdl | grep gaussians | awk '{print $NF}'`

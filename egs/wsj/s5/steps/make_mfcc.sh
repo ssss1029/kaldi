@@ -102,6 +102,7 @@ fi
 
 
 if [ -f $data/segments ]; then
+  # Will not go into here in this recipie
   echo "$0 [info]: segments file exists: using that."
 
   split_segments=""
@@ -127,6 +128,8 @@ else
   done
 
   echo "split_scps = $split_scps"
+  echo "logdir = $logdir"
+  echo "write_num_frams_opt = $write_num_frames_opt"
 
   utils/split_scp.pl $scp $split_scps || exit 1;
 

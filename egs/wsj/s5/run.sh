@@ -23,14 +23,10 @@ decode=true  # set to false to disable the decoding-related scripts.
 #wsj0=/data/corpora0/LDC93S6B
 #wsj1=/data/corpora0/LDC94S13B
 
-# You are going to have to change these paths to 
-# wherever the WSJ data lives on your machine.
 wsj0=/mnt/disk1/allan/data/LDC93S6B
 wsj1=/mnt/disk1/allan/data/LDC94S13B
 
-# These can be set to either run.pl or queue.pl
-#  - run.pl is meant for running locally
-#  - queue.pl is meant for running in a more flexilbe (e.g. distributed) environment
+
 # queue.pl is the default for both of these. 
 # This is the default config to run kaldi on multiple machines
 # I modified ./cmd.sh so that this wasn't the case anymore.
@@ -40,48 +36,9 @@ echo "decode_cmd is set to:"
 echo $decode_cmd
 
 
-# ################# Notes: 
-# This is the beginning of the stages. Calling run.sh with the --stage flag will 
-# start the script from a specified stage; Calling ./run.sh --stage n will run
-# stage n ... the end, skipping stages 1 ... n-1
-# 
-# There are three main locations for shell scripts to live in:
-#  - /local contains shell scripts that are unique to the current dataset (WSJ in this case)
-#  - /steps contains the "real" ASR steps
-#  - /utils contains stuff that is not strictly necessary for ASR but will help in stages
-#           such as data prep and LM prep
-# 
-# This script does a few things:
-# 
-# 
-
 if [ $stage -le 0 ]; then
-  # The Data Preparation stage
-  # The output of the data preparation stage consists of two sets of things. 
-  # One relates to "the data" (directories like data/train/) and one relates to 
-  # "the language" (directories like data/lang/). The "data" part relates to the 
-  # specific recordings you have, and the "lang" part contains things that relate 
-  # more to the language itself, such as the lexicon, the phone set, and various 
-  # extra information about the phone set that Kaldi needs.
-
+  # data preparation.
   echo "============== Data Prep =============="	
-  
-  # local/wsj_data_prep.sh
-  # Initializes the /s5/data/local/data/ directory. This folder will contain all the audio
-  # data information that Kaldi needs.
-  # Files created:
-  # => Note the .flist extension is for "File List" files and .scp is for "Script" files
-  #  - Creates /s5/data/local/data/${x}_wav.scp files where x is in {train_si284, train_si84, and etc. for test sets}
-  #    It does this by making these files first:
-  #     - Training sets: s5/data/local/data/train_si84.flist and s5/data/local/data/train_si284.flist
-  #        - Contains locations of all the raw .wv1 sphere files for training
-  #     - Various test and eval sets, named /s5/data/local/data/text_xxx.flist
-  #        - Contains locations of all the raw .wv1 sphere files for testing & evaluation
-  #  - List of transcript files: /s5/data/local/data/dot_files.flist
-  #     - The WSJ data set contains transcripts that are .dot fileis
-  #  - Creates Kaldi-friendly transcripts, called train_si84.txt, etc... inside /s5/data/local/data/
-  #  - Creates spk2utt and utt2spk files in the same location
-  # This deals mainly with preparing the audio data and the relevant metadata files for it.
   local/wsj_data_prep.sh $wsj0/??-{?,??}.? $wsj1/??-{?,??}.?  || exit 1;
 
   # Sometimes, we have seen WSJ distributions that do not have subdirectories
@@ -95,23 +52,9 @@ if [ $stage -le 0 ]; then
   #
   # "nosp" refers to the dictionary before silence probabilities and pronunciation
   # probabilities are added.
-
-  # local/wsj_prepare_dict.sh
-  # This essentially prepares the CMUDict data for Kaldi. It populates /s5/data/local/dict_nosp
-  # 
-  # Creates the following stuff:
-  #  - /data/local/dict_nosp/lexicon.txt. This is a Kaldi-friendly formatting of the
-  #    CMUDict lexicon.
-  #  - It also makes a few other files, like non-silence_phones.txt, silence_phones.txt, etc.
-  #    They can all be found under /s5/data/local/dict_nopsp
   echo "=================== WSJ prepare dict ================="
   local/wsj_prepare_dict.sh --dict-suffix "_nosp" || exit 1;
 
-
-  # utils/prepare_lang.sh
-  # Note this script is in the /utils/ directory: it is NOT WSJ-specific
-  # This script prepares a directory such as /data/lang_nosp given the dict we created
-  # in the previous step, a spoken noise label, and a temporary directory to work off of
   echo "=================== Prepare Lang ====================="
   utils/prepare_lang.sh data/local/dict_nosp \
                         "<SPOKEN_NOISE>" data/local/lang_tmp_nosp data/lang_nosp || exit 1;
@@ -130,8 +73,8 @@ if [ $stage -le 0 ]; then
   # NOTE: If you have a setup corresponding to the older cstr_wsj_data_prep.sh style,
   # use local/cstr_wsj_extend_dict.sh --dict-suffix "_nosp" $corpus/wsj1/doc/ instead.
 
-  # I'm running this in the foreground for debugging purposes. Note the commented out "# &&" on the
-  # last line...
+  # Run this in the foreground for debugging purposes
+
   echo "================== Stuff that should normally be run in the background ======================"
     local/wsj_extend_dict.sh --dict-suffix "_nosp" $wsj1/13-32.1  && \
       utils/prepare_lang.sh data/local/dict_nosp_larger \
@@ -175,6 +118,74 @@ if [ $stage -le 1 ]; then
       data/train_si84_2kshort data/lang_nosp exp/mono0a || exit 1;
   fi
 
+  if $decode; then
+    # There's some sort of reason why --nj are 10 and 8 here but idk why yet
+    # --nj 36 fails stuff
+
+    # utils/mkgraph.sh makes HCLG.fst. It needs to be called only once.
+    # exp/mono0a/graph_nosp_tgpr/HCLG.fst shoud exist at the end of this script.
+
+    # steps/decode.sh takes in the graph we created from the mkgraph.sh script and 
+    # decodes audio based on that? Does it compute mfccs too? 
+    # JK I think mfccs are made earlier.
+
+    utils/mkgraph.sh data/lang_nosp_test_tgpr exp/mono0a exp/mono0a/graph_nosp_tgpr && \
+      steps/decode.sh --nj 10 --cmd "$decode_cmd" exp/mono0a/graph_nosp_tgpr \
+        data/test_dev93 exp/mono0a/decode_nosp_tgpr_dev93 && \
+      steps/decode.sh --nj 8 --cmd "$decode_cmd" exp/mono0a/graph_nosp_tgpr \
+        data/test_eval92 exp/mono0a/decode_nosp_tgpr_eval92
+  fi
+fi
+
+exit 0; # For now
+
+if [ $stage -le 2 ]; then
+  # tri1
+  if $train; then
+    steps/align_si.sh --boost-silence 1.25 --nj 10 --cmd "$train_cmd" \
+      data/train_si84_half data/lang_nosp exp/mono0a exp/mono0a_ali || exit 1;
+
+    
+    # Train what deltas?
+    # I thought mfcc's were computed up there somewhere^
+    steps/train_deltas.sh --boost-silence 1.25 --cmd "$train_cmd" 2000 10000 \
+      data/train_si84_half data/lang_nosp exp/mono0a_ali exp/tri1 || exit 1;
+  fi
+
+  if $decode; then
+    utils/mkgraph.sh data/lang_nosp_test_tgpr \
+      exp/tri1 exp/tri1/graph_nosp_tgpr || exit 1;
+
+    for data in dev93 eval92; do
+      nspk=$(wc -l <data/test_${data}/spk2utt)
+      steps/decode.sh --nj $nspk --cmd "$decode_cmd" exp/tri1/graph_nosp_tgpr \
+        data/test_${data} exp/tri1/decode_nosp_tgpr_${data} || exit 1;
+
+      # test various modes of LM rescoring (4 is the default one).
+      # This is just confirming they're equivalent.
+      for mode in 1 2 3 4 5; do
+        steps/lmrescore.sh --mode $mode --cmd "$decode_cmd" \
+          data/lang_nosp_test_{tgpr,tg} data/test_${data} \
+          exp/tri1/decode_nosp_tgpr_${data} \
+          exp/tri1/decode_nosp_tgpr_${data}_tg$mode  || exit 1;
+      done
+      # later on we'll demonstrate const-arpa LM rescoring, which is now
+      # the recommended method.
+    done
+
+    ## the following command demonstrates how to get lattices that are
+    ## "word-aligned" (arcs coincide with words, with boundaries in the right
+    ## place).
+    #sil_label=`grep '!SIL' data/lang_nosp_test_tgpr/words.txt | awk '{print $2}'`
+    #steps/word_align_lattices.sh --cmd "$train_cmd" --silence-label $sil_label \
+    #  data/lang_nosp_test_tgpr exp/tri1/decode_nosp_tgpr_dev93 \
+    #  exp/tri1/decode_nosp_tgpr_dev93_aligned || exit 1;
+  fi
+fi
+
+if [ $stage -le 3 ]; then
+  # tri2b.  there is no special meaning in the "b"-- it's historical.
+  if $train; then
   if $decode; then
     # There's some sort of reason why --nj are 10 and 8 here but idk why yet
     # --nj 36 fails stuff
@@ -362,74 +373,6 @@ if [ $stage -le 5 ]; then
 
   # Silprob for larger ("bd") lexicon.
   utils/dict_dir_add_pronprobs.sh --max-normalize true \
-    data/local/dict_nosp_larger \
-    exp/tri3b/pron_counts_nowb.txt exp/tri3b/sil_counts_nowb.txt \
-    exp/tri3b/pron_bigram_counts_nowb.txt data/local/dict_larger || exit 1
-
-  utils/prepare_lang.sh data/local/dict_larger \
-    "<SPOKEN_NOISE>" data/local/lang_tmp_larger data/lang_bd || exit 1;
-
-  for lm_suffix in tgpr tgconst tg fgpr fgconst fg; do
-    mkdir -p data/lang_test_bd_${lm_suffix}
-    cp -r data/lang_bd/* data/lang_test_bd_${lm_suffix}/ || exit 1;
-    rm -rf data/lang_test_bd_${lm_suffix}/tmp
-    cp data/lang_nosp_test_bd_${lm_suffix}/G.* data/lang_test_bd_${lm_suffix}/
-  done
-fi
-
-
-if [ $stage -le 6 ]; then
-  # From 3b system, now using data/lang as the lang directory (we have now added
-  # pronunciation and silence probabilities), train another SAT system (tri4b).
-
-  if $train; then
-    steps/train_sat.sh  --cmd "$train_cmd" 4200 40000 \
-      data/train_si284 data/lang exp/tri3b exp/tri4b || exit 1;
-  fi
-
-  if $decode; then
-    utils/mkgraph.sh data/lang_test_tgpr \
-      exp/tri4b exp/tri4b/graph_tgpr || exit 1;
-    utils/mkgraph.sh data/lang_test_bd_tgpr \
-      exp/tri4b exp/tri4b/graph_bd_tgpr || exit 1;
-
-    for data in dev93 eval92; do
-      nspk=$(wc -l <data/test_${data}/spk2utt)
-      steps/decode_fmllr.sh --nj ${nspk} --cmd "$decode_cmd" \
-        exp/tri4b/graph_tgpr data/test_${data} \
-        exp/tri4b/decode_tgpr_${data} || exit 1;
-      steps/lmrescore.sh --cmd "$decode_cmd" \
-        data/lang_test_tgpr data/lang_test_tg \
-        data/test_${data} exp/tri4b/decode_{tgpr,tg}_${data} || exit 1
-
-      steps/decode_fmllr.sh --nj ${nspk} --cmd "$decode_cmd" \
-        exp/tri4b/graph_bd_tgpr data/test_${data} \
-        exp/tri4b/decode_bd_tgpr_${data} || exit 1;
-      steps/lmrescore_const_arpa.sh \
-        --cmd "$decode_cmd" data/lang_test_bd_{tgpr,fgconst} \
-        data/test_${data} exp/tri4b/decode_bd_tgpr_${data}{,_fg} || exit 1;
-    done
-  fi
-fi
-
-echo "FINISHED run.sh!"
-
-exit 0;
-
-### Caution: the parts of the script below this statement are not run by default.
-###
-
-
-# Train and test MMI, and boosted MMI, on tri4b (LDA+MLLT+SAT on
-# all the data).  Use 30 jobs.
-steps/align_fmllr.sh --nj 30 --cmd "$train_cmd" \
-  data/train_si284 data/lang exp/tri4b exp/tri4b_ali_si284 || exit 1;
-local/run_mmi_tri4b.sh
-
-# These demonstrate how to build a sytem usable for online-decoding with the nnet2 setup.
-# (see local/run_nnet2.sh for other, non-online nnet2 setups).
-local/online/run_nnet2.sh
-local/online/run_nnet2_baseline.sh
 local/online/run_nnet2_discriminative.sh
 
 # Demonstration of RNNLM rescoring on TDNN models. We comment this out by
