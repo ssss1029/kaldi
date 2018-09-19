@@ -17,12 +17,18 @@
 // See the Apache 2 License for the specific language governing permissions and
 // limitations under the License.
 
+/*
+ * I made some extra logs to this file. When running the WSJ recipie, they can be found at
+ * exp/mono0a/log/init.log
+ */
+
 
 #include "base/kaldi-common.h"
 #include "util/common-utils.h"
 #include "gmm/am-diag-gmm.h"
 #include "hmm/hmm-topology.h"
 #include "hmm/transition-model.h"
+#include "hmm/hmm-topology.h"
 
 namespace kaldi {
 // This function reads a file like:
@@ -125,15 +131,19 @@ int main(int argc, char *argv[]) {
       if (var_stats.Min() <= 0.0)
         KALDI_ERR << "bad variance";
       var_stats.InvertElements();  // Why is this inverting elements?
+                                   // This means that likelihoods can be computed with simple dot products
       glob_inv_var.CopyFromVec(var_stats);
       glob_mean.CopyFromVec(mean_stats);
     }
 
-    HmmTopology topo;
+    HmmTopology topo; // See http://kaldi-asr.org/doc/hmm.html
     bool binary_in;
     Input ki(topo_filename, &binary_in);
     topo.Read(ki.Stream(), binary_in); // It's reading from the XML-like file with the HMM topology (data/lang_nosp/topo)
 
+    /*
+     * This is just a list of phones
+     * */
     const std::vector<int32> &phones = topo.GetPhones();
     std::cout << "------------------------ \n";
     std::cout << "Phones from the HMM Topology:\n";
@@ -142,15 +152,37 @@ int main(int argc, char *argv[]) {
     }
     std::cout << "\n ------------------------ \n";
 
+    /*
+     * This is a mapping from phones to the number of sub-states it has.
+     * */
     std::vector<int32> phone2num_pdf_classes (1+phones.back());
-    for (size_t i = 0; i < phones.size(); i++)
+    std::cout << "------------------------ \n";
+    std::cout << "Phones 2 num_pdf_classes:\n";
+    for (int i = 0; i < phones.size(); i++){
       phone2num_pdf_classes[phones[i]] = topo.NumPdfClasses(phones[i]);
+      std::cout << "Found a new phone: -----\n";
+      std::cout << phones[i] << " has this many pdf classes: " << topo.NumPdfClasses(phones[i]) << "\n";
+      for (size_t k = 0; k < topo.TopologyForPhone(phones[i]).size(); k++) {
+        std::cout << phones[i] << " has an HMM state with " << topo.TopologyForPhone(phones[i])[k].forward_pdf_class << " forward pdf class and " << topo.TopologyForPhone(phones[i])[k].forward_pdf_class << " self-loop pdf class\n";
+      }
+      std::cout << "\n";
+    }
+    std::cout << "------------------------ \n";
+
+    // At this point, out HMMTopology object topo contains all the information about
+    // which phones have which pdf classes and how their transitions are modeled. Essentially everything
+    // you need to know about the HMM's topology.
 
     // Now the tree [not really a tree at this point]:
     ContextDependency *ctx_dep = NULL;
     if (shared_phones_rxfilename == "") {  // No sharing of phones: standard approach.
+      // Does NOT go in here in WSJ
       ctx_dep = MonophoneContextDependency(phones, phone2num_pdf_classes);
     } else {
+      // In this WSJ recipie, this is coming from the following flag (which is attatched to gmm-init-mono)
+      // --shared-phones=$lang/phones/sets.int
+      // The phrase "MonophoneContextDependencyShared" means that monophones with the same base phone get the same GMM/HMM model.
+      // This means we are disregarding stress (for vowels) and context (like _B, _E, etc.) for all phones.
       std::vector<std::vector<int32> > shared_phones;
       ReadSharedPhonesList(shared_phones_rxfilename, &shared_phones);
       // ReadSharedPhonesList crashes on error.
@@ -158,7 +190,13 @@ int main(int argc, char *argv[]) {
     }
 
     int32 num_pdfs = ctx_dep->NumPdfs();
+    std::cout << "Number of PDFs in MonophoneContextDependencyShared: " << num_pdfs << "\n";
 
+    /*
+     * An acoustic model based on a collection of objects of type DiagGmm, indexed by zero-based "pdf-ids",
+     * is implemented as class AmDiagGmm. 
+     * You can think of AmDiagGmm as a vector of type DiagGmm, although it has a slightly richer interface than that
+     */
     AmDiagGmm am_gmm;
     DiagGmm gmm;
     gmm.Resize(1, dim);
@@ -167,22 +205,31 @@ int main(int argc, char *argv[]) {
       inv_var.Row(0).CopyFromVec(glob_inv_var);
       Matrix<BaseFloat> mu(1, dim);
       mu.Row(0).CopyFromVec(glob_mean);
+
+      // There is only one multivariate gaussian in this GMM and it
+      // has weight 1. 
       Vector<BaseFloat> weights(1);
       weights.Set(1.0);
+      
       gmm.SetInvVarsAndMeans(inv_var, mu);
       gmm.SetWeights(weights);
       gmm.ComputeGconsts();
     }
-
+    
+    // Note that for the Acoustic model, every phone set's GMM is initialized to
+    // a single multivariate gaussian with sample mean and sample variance taken from a bunch of MFCCs 
     for (int i = 0; i < num_pdfs; i++)
       am_gmm.AddPdf(gmm);
 
+    // In the WSJ recipie, there isnt any pertrubation factor
     if (perturb_factor != 0.0) {
       for (int i = 0; i < num_pdfs; i++)
         am_gmm.GetPdf(i).Perturb(perturb_factor);
     }
 
     // Now the transition model:
+    // Initialize the transition model
+    // Initialize the object [e.g.at the start of training]. The class keeps a copy of the HmmTopology object, but not the ContextDependency object.
     TransitionModel trans_model(*ctx_dep, topo);
 
     {

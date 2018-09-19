@@ -97,7 +97,7 @@ if [ $stage -le -3 ]; then
   $cmd JOB=1 $dir/log/init.log \
     gmm-init-mono $shared_phones_opt "--train-feats=$feats subset-feats --n=10 ark:- ark:-|" $lang/topo $feat_dim \
     $dir/0.mdl $dir/tree || exit 1;
-  exit 0;
+  # exit 0; # For debugging purposes
 fi
 
 numgauss=`gmm-info --print-args=false $dir/0.mdl | grep gaussians | awk '{print $NF}'`
@@ -111,6 +111,11 @@ if [ $stage -le -2 ]; then
     "ark:|gzip -c >$dir/fsts.JOB.gz" || exit 1;
 fi
 
+# To train an ASR system, we must have phone-level temporal alignment.
+# Since this is the first version of the WSJ system, we don't have any of those yet.
+# The solution is to initialize alignments as an even split of the data (e.g. if 
+# the data is 1000 frames that have like 20 phones, we give each phone 1000/20=50 frames 
+# equally. The alignments are then re-estimated and we re-train on them as we go
 if [ $stage -le -1 ]; then
   echo "$0: Aligning data equally (pass 0)"
   $cmd JOB=1:$nj $dir/log/align.0.JOB.log \
