@@ -105,14 +105,23 @@ incgauss=$[($totgauss-$numgauss)/$max_iter_inc] # per-iter increment for #Gauss
 
 if [ $stage -le -2 ]; then
   echo "$0: Compiling training graphs"
+  # This command will make all training graphs. It creates fsts.1.gz ... fsts.10.gz
+  # Each compressed file contains all the training graphs from one split of the data.
   $cmd JOB=1:$nj $dir/log/compile_graphs.JOB.log \
     compile-train-graphs --read-disambig-syms=$lang/phones/disambig.int $dir/tree $dir/0.mdl  $lang/L.fst \
     "ark:sym2int.pl --map-oov $oov_sym -f 2- $lang/words.txt < $sdata/JOB/text|" \
     "ark:|gzip -c >$dir/fsts.JOB.gz" || exit 1;
+
+  # I changed compile-train-graphs to output different files for each FST created.
+  #$cmd JOB=1:$nj $dir/log/compile_graphs.JOB.log \
+  #  compile-train-graphs --read-disambig-syms=$lang/phones/disambig.int $dir/tree $dir/0.mdl  $lang/L.fst \
+  #  "ark:sym2int.pl --map-oov $oov_sym -f 2- $lang/words.txt < $sdata/JOB/text|" \
+  #  "ark:SAURAV_JOB_" || exit 1;
 fi
 
-# To train an ASR system, we must have phone-level temporal alignment.
-# Since this is the first version of the WSJ system, we don't have any of those yet.
+exit 0; # For debugging purposes
+
+# Since this is the first version of the WSJ system, we don't have any alignments
 # The solution is to initialize alignments as an even split of the data (e.g. if 
 # the data is 1000 frames that have like 20 phones, we give each phone 1000/20=50 frames 
 # equally. The alignments are then re-estimated and we re-train on them as we go

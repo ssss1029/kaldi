@@ -54,7 +54,7 @@ int main(int argc, char *argv[]) {
 
     po.Register("batch-size", &batch_size,
                 "Number of FSTs to compile at a time (more -> faster but uses "
-                "more memory.  E.g. 500");
+                "more memory.  E.g. 500"); // Defaults to 250
     po.Register("read-disambig-syms", &disambig_rxfilename, "File containing "
                 "list of disambiguation symbols in phone symbol table");
     
@@ -71,9 +71,21 @@ int main(int argc, char *argv[]) {
     std::string transcript_rspecifier = po.GetArg(4);
     std::string fsts_wspecifier = po.GetArg(5);
 
+    /**
+     * Sample results of the above arguments
+     * tree_rtxfilename = exp/mono0/tree
+     * model_rxfilename = exp/mono0/0.mdl
+     * lex_rxfilename = data/lang_nosp/L.fst
+     * transcript_rspecifier = ark:sym2int.pl --map-oov 64 -f 2- data/lang_nosp/words.txt < data/train_si84_2kshort/split10/1/text|
+     * fsts_wspecifier = ark:|gzip -c > exp/mono0/fsts.1.gz
+     **/
+
+    // This contains a simple tree from MonophoneContextDependencyShared
+    // I'm pretty sure this is how we get the phones/classes back from HMM-GMM model pdf_id's
     ContextDependency ctx_dep;  // the tree.
     ReadKaldiObject(tree_rxfilename, &ctx_dep);
 
+    // This contains the HMM-GMM model.
     TransitionModel trans_model;
     ReadKaldiObject(model_rxfilename, &trans_model);
 
@@ -92,8 +104,11 @@ int main(int argc, char *argv[]) {
 
     SequentialInt32VectorReader transcript_reader(transcript_rspecifier);
     TableWriter<fst::VectorFstHolder> fst_writer(fsts_wspecifier);
+    
 
     int num_succeed = 0, num_fail = 0;
+
+    KALDI_LOG << "Beginning transcript reading for training graphs.\n";
 
     if (batch_size == 1) {  // We treat batch_size of 1 as a special case in order
       // to test more parts of the code.
@@ -115,22 +130,34 @@ int main(int argc, char *argv[]) {
         }
       }
     } else {
-      std::vector<std::string> keys;
+      std::vector<std::string> keys; // A list of transcript IDs (like 011c0204)
       std::vector<std::vector<int32> > transcripts;
       while (!transcript_reader.Done()) {
         keys.clear();
         transcripts.clear();
+
+        // Get a batch of training data 
         for (; !transcript_reader.Done() &&
                 static_cast<int32>(transcripts.size()) < batch_size;
             transcript_reader.Next()) {
           keys.push_back(transcript_reader.Key());
           transcripts.push_back(transcript_reader.Value());
+          std::cout << "Found key: " <<  transcript_reader.Key() << "\n";
+          for (int j = 0; j < transcript_reader.Value().size(); j++) {
+            std::cout << transcript_reader.Value()[j] << " ";
+          }
+          std::cout << "\n----------\n";
         }
+
+        // Compiles a training graph from the transcripts, using 
+        // the HMM-GMM model and MonophoneContextDependencyShared tree.
+        // the gc object contains data from the HMM-GMM model, tree, and lexicon 
         std::vector<fst::VectorFst<fst::StdArc>* > fsts;
         if (!gc.CompileGraphsFromText(transcripts, &fsts)) {
           KALDI_ERR << "Not expecting CompileGraphs to fail.";
         }
         KALDI_ASSERT(fsts.size() == keys.size());
+
         for (size_t i = 0; i < fsts.size(); i++) {
           if (fsts[i]->Start() != fst::kNoStateId) {
             num_succeed++;
